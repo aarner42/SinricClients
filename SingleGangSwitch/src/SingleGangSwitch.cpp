@@ -67,8 +67,6 @@ void loop() {
       Serial.println(buttonPressed);
       buttonPressed--;
       toggleRelay();
-//      bool powerState = digitalRead(RELAY) != LOW;
-//      sinricSwitch -> setPowerState(powerState);
   }
   ArduinoOTA.handle();
 }
