@@ -1,14 +1,13 @@
+#include <SinricSwitch.h>
+
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include <ArduinoOTA.h>
-
-#include <SinricSwitch.h>
 #include <ESPAsyncWebServer.h>
 #include <ESPAsyncWiFiManager.h>
+#include <FS.h>
 
 #define MyApiKey "d66b0116-ac4f-43ed-9087-5d0e154554c4"
-//#define MySSID "Dutenhoefer"
-//#define MyWifiPassword "CepiCire99"
 
 #define DEVICE_ID "5c3826353d4dd357f795d360"  // deviceId is the ID assigned to your smart-home-device in sinric.com dashboard.
 #define LAN_HOSTNAME  "AlphaBravoTwo"
@@ -30,8 +29,6 @@ AsyncWebServer server(80);
 DNSServer dns;
 
 volatile byte buttonPressed = 0;
-unsigned long lastDebounceTime = 0;
-unsigned const long debounceDelay = 50;
 
 void setup() {
     pinMode(LED, OUTPUT);
@@ -55,7 +52,103 @@ void setup() {
 
     initializeOTA();
 
-    sinricSwitch = new SinricSwitch(MyApiKey, DEVICE_ID, 80, closeRelay, openRelay, alertViaLed, resetModule);
+    Serial.println("Starting FS");
+    SPIFFS.begin();
+
+    Serial.println("Checking for config file /sinric-config.txt");
+    bool sinricConfigExists = SPIFFS.exists("/sinric-config.txt");
+    if (!sinricConfigExists) {
+        Serial.println("config file not present - starting web server for configuration purposes.");
+        server.reset();
+        Serial.println("Server reset complete...");
+
+        server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+            request->send(200, "text/plain", "You'll want to submit /config?apiKey=[yourKey]&deviceID=[yourDeviceId]");
+        });
+        Serial.println("Setup / handler");
+
+        server.on("/config", HTTP_GET, [] (AsyncWebServerRequest *request)  {
+            if (request->hasParam("apiKey") && request->hasParam("deviceID")) {
+                String apiKey = request->getParam("apiKey")->value();
+                String deviceID = request->getParam("deviceID")->value();
+
+                File configFile = SPIFFS.open("/sinric-config.txt", "w");
+                if (!configFile) {
+                    Serial.println("File won't open - Can't complete...");
+                    request->send(500, "text/plain", "The flash FS is fucked...Try again.");
+                } else {
+                    int written = configFile.print("apiKey=");
+                    written += configFile.println(apiKey);
+                    written += configFile.print("deviceID=");
+                    written += configFile.println(deviceID);
+                    configFile.flush();
+                    configFile.close();
+                    if (written < 50) {
+                        Serial.println("Didn't write enough data.  Can't complete");
+                    } else {
+                        Serial.println("Wrote config values to flash");
+                        Serial.print("apiKey=");
+                        Serial.println(apiKey);
+                        Serial.print("deviceID");
+                        Serial.println(deviceID);
+                        Serial.println("Resetting...");
+                        ESP.reset();
+                    }
+                }
+            } else {
+                request->send(400, "text/plain", "You fucked that up.  Try again, but this time with the required params.");
+            }
+        });
+        Serial.println("Setup /config handler");
+
+        server.onNotFound([] (AsyncWebServerRequest *request) {
+            request->send(404, "text/plain", "That'll be a 404.  Try again.");
+        });
+        Serial.println("Setup 404 handler");
+
+        server.begin();
+        Serial.println("Server initialized");
+        while (true) {
+            yield();
+        }
+    } else {
+        char apiKeyBuffer[64];
+        char devIdBuffer[64];
+        File configFile = SPIFFS.open("/sinric-config.txt", "r");
+        //read the apiKey
+        if (configFile.available()) {
+            int l = configFile.readBytesUntil('\n', apiKeyBuffer, sizeof(apiKeyBuffer));
+            apiKeyBuffer[l] = 0;
+        }
+        if (configFile.available()) {
+            int l = configFile.readBytesUntil('\n', devIdBuffer, sizeof(devIdBuffer));
+            devIdBuffer[l] = 0;
+        }
+        String apiKeyFull = apiKeyBuffer;
+        String deviceIdFull = devIdBuffer;
+        String apiKey = apiKeyFull.substring(apiKeyFull.lastIndexOf("="));
+        String deviceID = deviceIdFull.substring(apiKeyFull.lastIndexOf("="));
+        if (apiKey.length() == 38 && deviceID.length() == 28) {
+            sinricSwitch = new SinricSwitch(MyApiKey, DEVICE_ID, 80, closeRelay, openRelay, alertViaLed, resetModule);
+        } else {
+            Serial.println("Params are wrong:");
+            Serial.print("apiKey=");
+            Serial.print(apiKey);
+            Serial.print(" - ");
+            Serial.print(apiKey.length());
+            Serial.println(" bytes when should be 32");
+
+            Serial.print("deviceID=");
+            Serial.print(deviceID);
+            Serial.print(" - ");
+            Serial.print(deviceID.length());
+            Serial.println(" bytes when should be 32");
+
+            Serial.println("Erasing bad config file ...");
+            SPIFFS.remove("/sinric-config.txt");
+            Serial.println("...And reset.");
+        }
+    }
 }
 
 
