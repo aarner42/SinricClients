@@ -25,7 +25,7 @@ void initializeOTA();
 void updateButtonState()  ICACHE_RAM_ATTR;
 
 void initWebPortalForConfigCapture();
-void handleBadConfig(const String &apiKey, const String &deviceID);
+void validateConfig(const String &name, const String &value, const int expected);
 String readConfigValueFromFile(const String &name);
 
 SinricSwitch *sinricSwitch = nullptr;
@@ -65,32 +65,31 @@ void setup() {
     } else {
         String apiKey = readConfigValueFromFile("apiKey");
         String deviceID = readConfigValueFromFile("deviceId");
-        if (apiKey.length() == 38 && deviceID.length() == 28) {
-            sinricSwitch = new SinricSwitch(apiKey.c_str(), deviceID.c_str(), 80, closeRelay, openRelay, alertViaLed, resetModule);
-        } else {
-            handleBadConfig(apiKey, deviceID);
-
-        }
+        validateConfig("apiKey", apiKey, 38);
+        validateConfig("deviceID", deviceID, 28);
+        sinricSwitch = new SinricSwitch(apiKey.c_str(), deviceID.c_str(), 80, closeRelay, openRelay, alertViaLed, resetModule);
     }
 }
 
-void handleBadConfig(const String &apiKey, const String &deviceID) {
-    Serial.println("Params are wrong:");
-    Serial.print("apiKey=");
-    Serial.print(apiKey);
-    Serial.print(" - ");
-    Serial.print(apiKey.length());
-    Serial.println(" bytes when should be 32");
+void validateConfig(const String &name, const String &value, const int expected) {
+    Serial.print(name);
+    Serial.print("=");
+    Serial.print(value);
+    if (value.length() != expected) {
+        Serial.print(" - is");
+        Serial.print(value.length());
+        Serial.print(" bytes. Should be");
+        Serial.print(expected);
+        Serial.println(" bytes.");
+        Serial.println("Erasing bad config file ...");
+        SPIFFS.remove("/sinric-config.txt");
+        Serial.println("...And reset.");
+        ESP.reset();
+    } else {
+        Serial.println(" - is OK");
+    }
 
-    Serial.print("deviceID=");
-    Serial.print(deviceID);
-    Serial.print(" - ");
-    Serial.print(deviceID.length());
-    Serial.println(" bytes when should be 32");
 
-    Serial.println("Erasing bad config file ...");
-    SPIFFS.remove("/sinric-config.txt");
-    Serial.println("...And reset.");
 }
 
 String readConfigValueFromFile(const String &name) {
