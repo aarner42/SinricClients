@@ -22,6 +22,7 @@ void alertViaLed();
 void closeRelay();
 void openRelay();
 void resetModule();
+void rebootModule();
 
 void gestureInterrupt()  ICACHE_RAM_ATTR;
 void handleGesture();
@@ -81,7 +82,7 @@ void setup() {
             Serial.println(F("Something went wrong during gesture sensor init!"));
         }
 
-        sinricSwitch = new SinricSwitch(apiKey.c_str(), deviceID.c_str(), 80, closeRelay, openRelay, alertViaLed, resetModule);
+        sinricSwitch = new SinricSwitch(apiKey.c_str(), deviceID.c_str(), 80, closeRelay, openRelay, alertViaLed, rebootModule, resetModule);
     }
 }
 
@@ -205,10 +206,12 @@ void handleGesture() {
             case DIR_UP:
                 Serial.println("UP");
                 closeRelay();
+                sinricSwitch -> setPowerState(digitalRead(RELAY));
                 break;
             case DIR_DOWN:
                 Serial.println("DOWN");
                 openRelay();
+                sinricSwitch -> setPowerState(digitalRead(RELAY));
                 break;
             case DIR_LEFT:
                 Serial.println("LEFT");
@@ -251,6 +254,13 @@ void alertViaLed() {
 }
 
 void resetModule() {
-  Serial.println("Someone requested a reset...");
+  Serial.println("Someone requested a full reset...");
+  SPIFFS.remove("/sinric-config.txt");
   ESP.restart();
+}
+
+void rebootModule() {
+    Serial.println("Someone requested a reboot...");
+    ESP.restart();
+
 }
