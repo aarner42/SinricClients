@@ -192,7 +192,7 @@ void loop() {
       gestureAvailable=0;
       handleGesture();
   }
-  ArduinoOTA.handle();
+
 }
 
 void gestureInterrupt()  {

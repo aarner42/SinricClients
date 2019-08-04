@@ -1,16 +1,13 @@
 #include <SinricSwitch.h>
+#include <DeviceConfigurator.h>
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
-#include <ArduinoOTA.h>
 #include <ESPAsyncWebServer.h>
-#include <ESPAsyncWiFiManager.h>
+#include <WiFiManager.h>
 #include <FS.h>
 
-#define MyApiKey "d66b0116-ac4f-43ed-9087-5d0e154554c4"
-
-#define DEVICE_ID "5c3826353d4dd357f795d360"  // deviceId is the ID assigned to your smart-home-device in sinric.com dashboard.
-#define LAN_HOSTNAME  "AlphaBravoTwo"
+#define LAN_HOSTNAME  "ESP_NoConfig"
 /************ define pins *********/
 #define RELAY   D1   // D1 drives 120v relay
 #define CONTACT D3   // D3 connects to momentary switch
@@ -21,16 +18,16 @@ void closeRelay();
 void openRelay();
 void toggleRelay();
 void resetModule();
-void initializeOTA();
+void rebootModule();
+
 void updateButtonState()  ICACHE_RAM_ATTR;
 
 void initWebPortalForConfigCapture();
-void validateConfig(const String &name, const String &value, const int expected);
-String readConfigValueFromFile(const String &name);
+void validateConfig(const char *name, String value, uint8 expected);
+String readConfigValueFromFile(const char *name);
 
 SinricSwitch *sinricSwitch = nullptr;
 AsyncWebServer server(80);
-DNSServer dns;
 
 volatile byte buttonPressed = 0;
 
@@ -43,18 +40,16 @@ void setup() {
     digitalWrite(RELAY, LOW);   //high-voltage side off
     Serial.begin(115200);
 
-    AsyncWiFiManager wiFiManager(&server, &dns);
+    WiFiManager wiFiManager;
     wiFiManager.autoConnect(LAN_HOSTNAME);
 
-    attachInterrupt(digitalPinToInterrupt(CONTACT), updateButtonState, FALLING);
     Serial.println("");
     Serial.print("WiFi connected. ");
     Serial.print("IP address: ");
     Serial.println(WiFi.localIP());
-    Serial.print("OTA Host: ");
+    Serial.print("HotspotName: ");
     Serial.println(LAN_HOSTNAME);
 
-    initializeOTA();
 
     Serial.println("Starting FS");
     SPIFFS.begin();
@@ -63,18 +58,20 @@ void setup() {
     if (!SPIFFS.exists("/sinric-config.txt")) {
         initWebPortalForConfigCapture();
     } else {
-        String apiKey = readConfigValueFromFile("apiKey");
-        String deviceID = readConfigValueFromFile("deviceId");
-        validateConfig("apiKey", apiKey, 38);
-        validateConfig("deviceID", deviceID, 28);
-        sinricSwitch = new SinricSwitch(apiKey.c_str(), deviceID.c_str(), 80, closeRelay, openRelay, alertViaLed, resetModule);
+        String deviceID = readConfigValueFromFile(DEVICE_ID_PARAM);
+        String apiKey = readConfigValueFromFile(SINRIC_KEY_PARAM);
+        validateConfig(SINRIC_KEY_PARAM, apiKey, 37);
+        validateConfig(DEVICE_ID_PARAM, deviceID, 25);
+        attachInterrupt(digitalPinToInterrupt(CONTACT), updateButtonState, FALLING);
+        sinricSwitch = new SinricSwitch(apiKey, deviceID, 80, closeRelay, openRelay, alertViaLed, rebootModule, resetModule);
     }
 }
 
-void validateConfig(const String &name, const String &value, const int expected) {
+void validateConfig(const char *name, String value, const uint8 expected) {
     Serial.print(name);
     Serial.print("=");
     Serial.print(value);
+
     if (value.length() != expected) {
         Serial.print(" - is");
         Serial.print(value.length());
@@ -92,17 +89,17 @@ void validateConfig(const String &name, const String &value, const int expected)
 
 }
 
-String readConfigValueFromFile(const String &name) {
+String readConfigValueFromFile(const char *name) {
     char lineBuffer[128];
     File configFile = SPIFFS.open("/sinric-config.txt", "r");
-    String returnVal = "";
+    String  returnVal = "";
     //read the apiKey
     while (configFile.available()) {
         int l = configFile.readBytesUntil('\n', lineBuffer, sizeof(lineBuffer));
         lineBuffer[l] = 0;
-        String line = lineBuffer;
+        String  line = lineBuffer;
         if (line.indexOf(name) > -1) {
-            returnVal = line.substring(line.lastIndexOf("="));
+            returnVal = line.substring(line.lastIndexOf('=')+1);
             break;
         }
     }
@@ -144,7 +141,7 @@ void initWebPortalForConfigCapture() {
                     Serial.println("Wrote config values to flash");
                     Serial.print("apiKey=");
                     Serial.println(apiKey);
-                    Serial.print("deviceID");
+                    Serial.print("deviceID=");
                     Serial.println(deviceID);
                     Serial.println("Resetting...");
                     ESP.reset();
@@ -177,8 +174,9 @@ void loop() {
       Serial.println(buttonPressed);
       buttonPressed--;
       toggleRelay();
+
   }
-  ArduinoOTA.handle();
+
 }
 
 void updateButtonState() {
@@ -194,7 +192,6 @@ void updateButtonState() {
 
 void toggleRelay() {
     Serial.print("Toggling switch..");
-
     int currentState = digitalRead(RELAY);
     if (currentState) {
         digitalWrite(RELAY, LOW);
@@ -204,6 +201,7 @@ void toggleRelay() {
         digitalWrite(RELAY, HIGH);
         digitalWrite(LED, LOW);
     }
+    sinricSwitch->setPowerState(!currentState);
 }
 
 void openRelay() {
@@ -229,26 +227,15 @@ void alertViaLed() {
 }
 
 void resetModule() {
-  Serial.println("Someone requested a reset...");
+  Serial.println("Someone requested a full reset...");
+  SPIFFS.remove("/sinric-config.txt");
   ESP.restart();
 }
 
-void initializeOTA() {
-    Serial.println("Setting up ArduinoOTA handlers...");
-    ArduinoOTA.setPort(8266);
-    ArduinoOTA.setHostname(LAN_HOSTNAME);
-    ArduinoOTA.onStart([]() {  Serial.println("Start");  });
-    ArduinoOTA.onEnd([]()   {  Serial.println("\nEnd");  });
-    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {  Serial.printf("Progress: %u%%\r", (progress / (total / 100)));   });
-    ArduinoOTA.onError([](ota_error_t error) {
-        Serial.printf("Error[%u]: ", error);
-        if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
-        else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
-        else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
-        else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-        else if (error == OTA_END_ERROR) Serial.println("End Failed");
-    });
-    ArduinoOTA.begin();
+void rebootModule() {
+    Serial.println("Someone requested a reboot...");
+    ESP.restart();
+
 }
 
 
