@@ -1,40 +1,47 @@
+
 #include <SinricSwitch.h>
-#include <DeviceConfigurator.h>
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
+#include <ArduinoOTA.h>
 #include <ESPAsyncWebServer.h>
 #include <WiFiManager.h>
 #include <FS.h>
+#include <Wire.h>
+#include <SparkFun_APDS9960.h>
+#include <DNSServer.h>
 
-#define LAN_HOSTNAME  "ESP_NoConfig"
-/************ define pins *********/
-#define RELAY   D1   // D1 drives 120v relay
-#define CONTACT D3   // D3 connects to momentary switch
-#define LED D4       // D4 powers switch illumination
+#define LAN_HOSTNAME  "AlphaBravoEight"
+//************ define pins *********
+
+#define RELAY       D8   // D1 drives 120v relay
+#define GESTURE_PIN D3   // D3 connects to momentary switch
+#define LED         D4       // D4 powers switch illumination
 
 void alertViaLed();
 void closeRelay();
 void openRelay();
-void toggleRelay();
 void resetModule();
 void rebootModule();
 
-void updateButtonState()  ICACHE_RAM_ATTR;
+void gestureInterrupt()  ICACHE_RAM_ATTR;
+void handleGesture();
 
 void initWebPortalForConfigCapture();
-void validateConfig(const char *name, String value, uint8 expected);
-String readConfigValueFromFile(const char *name);
+void validateConfig(const String &name, const String &value, uint8 expected);
+String readConfigValueFromFile(const String &name);
 
 SinricSwitch *sinricSwitch = nullptr;
 AsyncWebServer server(80);
+DNSServer dns;
+SparkFun_APDS9960 apds = SparkFun_APDS9960();
 
-volatile byte buttonPressed = 0;
+volatile int gestureAvailable = 0;
 
 void setup() {
     pinMode(LED, OUTPUT);
     pinMode(RELAY, OUTPUT);
-    pinMode(CONTACT, INPUT_PULLUP);
+    pinMode(GESTURE_PIN, INPUT);
    
     digitalWrite(LED, HIGH);    //switch illumination to on
     digitalWrite(RELAY, LOW);   //high-voltage side off
@@ -47,9 +54,8 @@ void setup() {
     Serial.print("WiFi connected. ");
     Serial.print("IP address: ");
     Serial.println(WiFi.localIP());
-    Serial.print("HotspotName: ");
+    Serial.print("OTA Host: ");
     Serial.println(LAN_HOSTNAME);
-
 
     Serial.println("Starting FS");
     SPIFFS.begin();
@@ -58,43 +64,60 @@ void setup() {
     if (!SPIFFS.exists("/sinric-config.txt")) {
         initWebPortalForConfigCapture();
     } else {
-        String deviceID = readConfigValueFromFile(DEVICE_ID_PARAM);
-        String apiKey = readConfigValueFromFile(SINRIC_KEY_PARAM);
-        validateConfig(SINRIC_KEY_PARAM, apiKey, 37);
-        validateConfig(DEVICE_ID_PARAM, deviceID, 25);
-        attachInterrupt(digitalPinToInterrupt(CONTACT), updateButtonState, FALLING);
-        sinricSwitch = new SinricSwitch(apiKey, deviceID, 80, closeRelay, openRelay, alertViaLed, rebootModule, resetModule);
+        String apiKey = readConfigValueFromFile("apiKey");
+        String deviceID = readConfigValueFromFile("deviceID");
+        validateConfig("apiKey", apiKey, 37);
+        validateConfig("deviceID", deviceID, 25);
+        attachInterrupt(digitalPinToInterrupt(GESTURE_PIN), gestureInterrupt, FALLING);
+
+        if ( apds.init() ) {
+            Serial.println(F("APDS-9960 initialization complete"));
+        } else {
+            Serial.println(F("Something went wrong during APDS-9960 init!"));
+        }
+        // Start running the APDS-9960 gesture sensor engine
+        if ( apds.enableGestureSensor(true) ) {
+            Serial.println(F("Gesture sensor is now running"));
+        } else {
+            Serial.println(F("Something went wrong during gesture sensor init!"));
+        }
+
+        sinricSwitch = new SinricSwitch(apiKey.c_str(), deviceID.c_str(), 80, closeRelay, openRelay, alertViaLed, rebootModule, resetModule);
     }
 }
 
-void validateConfig(const char *name, String value, const uint8 expected) {
+void validateConfig(const String &name, const String &value, const uint8 expected) {
     Serial.print(name);
     Serial.print("=");
     Serial.print(value);
-
     if (value.length() != expected) {
         Serial.print(" - is");
         Serial.print(value.length());
         Serial.print(" bytes. Should be");
         Serial.print(expected);
         Serial.println(" bytes.");
+        Serial.println("Erasing bad config file ...");
+        SPIFFS.remove("/sinric-config.txt");
+        Serial.println("...And reset.");
+        ESP.reset();
+    } else {
+        Serial.println(" - is OK");
+    }
 
-    Serial.println("Erasing bad config file ...");
-    SPIFFS.remove("/sinric-config.txt");
-    Serial.println("...And reset.");
+
 }
 
-String readConfigValueFromFile(const char *name) {
+String readConfigValueFromFile(const String &name) {
     char lineBuffer[128];
     File configFile = SPIFFS.open("/sinric-config.txt", "r");
-    String  returnVal = "";
+    String returnVal = "";
     //read the apiKey
     while (configFile.available()) {
         int l = configFile.readBytesUntil('\n', lineBuffer, sizeof(lineBuffer));
         lineBuffer[l] = 0;
-        String  line = lineBuffer;
+        String line = lineBuffer;
         if (line.indexOf(name) > -1) {
-            returnVal = line.substring(line.lastIndexOf("="));
+            returnVal = line.substring(line.lastIndexOf("=")+1);
             break;
         }
     }
@@ -164,39 +187,48 @@ void initWebPortalForConfigCapture() {
 void loop() {
   sinricSwitch -> loop();
 
-  if (buttonPressed > 0) {
-      Serial.print("manual press: " );
-      Serial.println(buttonPressed);
-      buttonPressed--;
-      toggleRelay();
-
+  if (gestureAvailable > 0) {
+      Serial.print("gesture sensor requests interrupt: " );
+      gestureAvailable=0;
+      handleGesture();
   }
 
 }
 
-void updateButtonState() {
-        static unsigned long last_interrupt_time = 0;
-        unsigned long interrupt_time = millis();
-        // If interrupts come faster than 200ms, assume it's a bounce and ignore
-        if (interrupt_time - last_interrupt_time > 200)
-        {
-            buttonPressed++;
-        }
-        last_interrupt_time = interrupt_time;
+void gestureInterrupt()  {
+    Serial.println("Interrupt handler hits");
+    gestureAvailable++;
 }
 
-void toggleRelay() {
-    Serial.print("Toggling switch..");
-    int currentState = digitalRead(RELAY);
-    if (currentState) {
-        digitalWrite(RELAY, LOW);
-        digitalWrite(LED, HIGH);
+void handleGesture() {
+    if ( apds.isGestureAvailable() ) {
+        switch ( apds.readGesture() ) {
+            case DIR_UP:
+                Serial.println("UP");
+                closeRelay();
+                sinricSwitch -> setPowerState(digitalRead(RELAY));
+                break;
+            case DIR_DOWN:
+                Serial.println("DOWN");
+                openRelay();
+                sinricSwitch -> setPowerState(digitalRead(RELAY));
+                break;
+            case DIR_LEFT:
+                Serial.println("LEFT");
+                break;
+            case DIR_RIGHT:
+                Serial.println("RIGHT");
+                break;
+            case DIR_NEAR:
+                Serial.println("NEAR");
+                break;
+            case DIR_FAR:
+                Serial.println("FAR");
+                break;
+            default:
+                Serial.println("NONE");
+        }
     }
-    else {
-        digitalWrite(RELAY, HIGH);
-        digitalWrite(LED, LOW);
-    }
-    sinricSwitch->setPowerState(!currentState);
 }
 
 void openRelay() {
@@ -232,8 +264,3 @@ void rebootModule() {
     ESP.restart();
 
 }
-
-
-
-
-
