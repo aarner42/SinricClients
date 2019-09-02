@@ -1,0 +1,4 @@
+
+# add_executable(${PROJECT_NAME} ${SRC_LIST} lib/OTA/src/OverTheAir.cpp lib/OTA/src/OverTheAir.h)
+
+# add_executable(${PROJECT_NAME} ${SRC_LIST} lib/OTA/src/SinricSwitch.h)
