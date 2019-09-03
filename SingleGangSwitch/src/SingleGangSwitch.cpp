@@ -4,13 +4,15 @@
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include <WiFiManager.h>
+#include <FirmwareUpdater.h>
 
 
+/************ define pins - Now in Config File *********/
+//#define RELAY   D1   // D1 drives 120v relay
+//#define CONTACT D3   // D3 connects to momentary switch
+//#define LED D4       // D4 powers switch illumination
 #define LAN_HOSTNAME  "ESP_NoConfig"
-/************ define pins *********/
-#define RELAY   D1   // D1 drives 120v relay
-#define CONTACT D3   // D3 connects to momentary switch
-#define LED D4       // D4 powers switch illumination
+#define CONFIG_FILE_NAME "/sinricSwitch1.txt"
 
 void alertViaLed();
 void closeRelay();
@@ -20,45 +22,45 @@ void resetModule();
 void rebootModule();
 void updateButtonState()  ICACHE_RAM_ATTR;
 
+#define SKETCH_VERSION "v20190902-2200"
+#define SKETCH_NAME "singleGangSwitch"
+DeviceConfigurator* dev1 = nullptr;
 SinricSwitch *sinricSwitch = nullptr;
-
+FirmwareUpdater* fwFetcher = nullptr;
+IOTConfig swCfg;
 volatile byte buttonPressed = 0;
 
 void setup() {
-    pinMode(LED, OUTPUT);
-    pinMode(RELAY, OUTPUT);
-    pinMode(CONTACT, INPUT_PULLUP);
-   
-    digitalWrite(LED, HIGH);    //switch illumination to on
-    digitalWrite(RELAY, LOW);   //high-voltage side off
     Serial.begin(115200);
+    Serial.println("************************ " SKETCH_VERSION " ***************************");
+
+    Serial.print("Initializing WiFi Manager to capture config with AP Name: ");
+    Serial.println(LAN_HOSTNAME);
 
     WiFiManager wiFiManager;
     wiFiManager.autoConnect(LAN_HOSTNAME);
 
     Serial.println("");
-    Serial.print("WiFi connected. ");
-    Serial.print("IP address: ");
+    Serial.print("WiFi connected (as client.) ");
+    Serial.print("LAN IP addr: ");
     Serial.println(WiFi.localIP());
-    Serial.print("HotspotName: ");
-    Serial.println(LAN_HOSTNAME);
+
+    fwFetcher = new FirmwareUpdater(SKETCH_NAME, SKETCH_VERSION, 21600000);
+
+    dev1 = new DeviceConfigurator(CONFIG_FILE_NAME);
+    swCfg = dev1->getConfig();
+
+    attachInterrupt(digitalPinToInterrupt(swCfg.inputPin), updateButtonState, FALLING);
+    sinricSwitch = new SinricSwitch(swCfg.apiKey, swCfg.deviceID, 80, closeRelay, openRelay, alertViaLed, rebootModule, resetModule);
+
+    pinMode(swCfg.ledPin, OUTPUT);
+    pinMode(swCfg.triggerPin, OUTPUT);
+    pinMode(swCfg.inputPin, INPUT_PULLUP);
+
+    digitalWrite(swCfg.ledPin, HIGH);    //switch illumination to on
+    digitalWrite(swCfg.triggerPin, swCfg.offLevel);   //high-voltage side off
 
 
-
-    Serial.println("Starting FS");
-    SPIFFS.begin();
-
-    Serial.println("Checking for config file /sinric-config.txt");
-    if (!SPIFFS.exists("/sinric-config.txt")) {
-        initWebPortalForConfigCapture();
-    } else {
-        String deviceID = readConfigValueFromFile(DEVICE_ID_PARAM);
-        String apiKey = readConfigValueFromFile(SINRIC_KEY_PARAM);
-        validateConfig(SINRIC_KEY_PARAM, apiKey, 37);
-        validateConfig(DEVICE_ID_PARAM, deviceID, 25);
-        attachInterrupt(digitalPinToInterrupt(CONTACT), updateButtonState, FALLING);
-        sinricSwitch = new SinricSwitch(apiKey, deviceID, 80, closeRelay, openRelay, alertViaLed, rebootModule, resetModule);
-    }
 }
 
 
@@ -67,10 +69,14 @@ void loop() {
   sinricSwitch -> loop();
 
   if (buttonPressed > 0) {
-      Serial.print("manual press: " );
+      Serial.print("manual button press: " );
       Serial.println(buttonPressed);
       buttonPressed--;
       toggleRelay();
+  }
+
+  if (fwFetcher->isUpdateCheckDue()) {
+      fwFetcher->checkServerForUpdate();
   }
 
 }
@@ -88,48 +94,48 @@ void updateButtonState() {
 
 void toggleRelay() {
     Serial.print("Toggling switch..");
-    int currentState = digitalRead(RELAY);
+    int currentState = digitalRead(swCfg.triggerPin);
     if (currentState) {
-        digitalWrite(RELAY, LOW);
-        digitalWrite(LED, HIGH);
-    }
-    else {
-        digitalWrite(RELAY, HIGH);
-        digitalWrite(LED, LOW);
+        digitalWrite(swCfg.triggerPin, LOW);
+        digitalWrite(swCfg.ledPin, HIGH);
+    } else {
+        digitalWrite(swCfg.triggerPin, HIGH);
+        digitalWrite(swCfg.ledPin, LOW);
     }
     sinricSwitch->setPowerState(!currentState);
 }
 
 void openRelay() {
     Serial.println("Opening relay...");
-    digitalWrite(RELAY, LOW);
-    digitalWrite(LED, HIGH);
+    digitalWrite(swCfg.triggerPin, swCfg.offLevel);
+    digitalWrite(swCfg.ledPin, HIGH);
 }
 
 void closeRelay() {
     Serial.println("Closing relay...");
-    digitalWrite(RELAY, HIGH);
-    digitalWrite(LED, LOW);
+    digitalWrite(swCfg.triggerPin, swCfg.onLevel);
+    digitalWrite(swCfg.ledPin, LOW);
 }
 
 void alertViaLed() {
     //blink the led for 2.4 sec
     for(int i=0; i<24; i++) {
-        digitalWrite(LED, LOW);
+        digitalWrite(swCfg.ledPin, LOW);
         delay(50);
-        digitalWrite(LED, HIGH);
+        digitalWrite(swCfg.ledPin, HIGH);
         delay(50);
     }
 }
 
 void resetModule() {
-  Serial.println("Someone requested a full reset...");
-  SPIFFS.remove("/sinric-config.txt");
+  Serial.println("Someone requested a complete reset...");
+  SPIFFS.begin();
+  SPIFFS.remove(CONFIG_FILE_NAME);
   ESP.restart();
 }
 
 void rebootModule() {
-    Serial.println("Someone requested a reboot...");
+    Serial.println("Someone requested just a reboot...");
     ESP.restart();
 }
 

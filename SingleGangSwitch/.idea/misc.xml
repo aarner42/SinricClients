@@ -4,8 +4,6 @@
   <component name="CidrRootsConfiguration">
     <sourceRoots>
       <file path="$PROJECT_DIR$/lib/DeviceConfigurator" />
-      <file path="$PROJECT_DIR$/lib/FirmwareFetcher" />
-      <file path="$PROJECT_DIR$/lib/SinricSwitch" />
       <file path="$PROJECT_DIR$/src" />
     </sourceRoots>
     <libraryRoots>
