@@ -9,7 +9,7 @@ FirmwareUpdater::FirmwareUpdater(const char* sketchName, const char* currentVers
     this->duration = duration;
     this->sketchName = sketchName;
     this->currentVersion = currentVersion;
-    this->updateCheckDue = false;
+    this->updateCheckDue = true;
     versionURL = "";
     versionURL.concat(SKETCH_OTA_UPDATER_HOST);
     versionURL.concat(sketchName);
@@ -24,6 +24,7 @@ FirmwareUpdater::~FirmwareUpdater() {
 }
 
 void FirmwareUpdater::setUpdateDue() {
+    Serial.println("Ticker fired to set updateDue method in fwFetcher");
     this->updateCheckDue = true;
 }
 

@@ -19,7 +19,7 @@ SinricSwitch::SinricSwitch(String apiKey, String device_id, unsigned int port, v
     startWebServer(port);
     startSinricClient(apiKey);
     heartbeatTimestamp = 0;
-    pingTimeStamp = 0;uptime
+    pingTimeStamp = 0;
     Serial.print("Registered switch with deviceID=[");
     Serial.print(deviceID);
     Serial.println("]");
@@ -229,10 +229,11 @@ void SinricSwitch::sinricOff(String id) {
 
 void SinricSwitch::handleRoot() {
     uint64_t now = millis();
-    char buff[24];
-    sprintf(buff, "%" PRIu64, now / 1000 / 3600);
-    server->send(200, "text/plain",
-                 "Uptime: " + String(buff) + " hours.  Call /reboot or /resetAll if you want to restart/reset me (deviceID=" + deviceID + ")...");
+//    char buff[24];
+//    sprintf(buff, "%" PRIu64, now / 1000 / 3600);
+    char newString[128];
+    sprintf(newString, "deviceID=%s : Uptime is %llu hours - Call  /reboot or /resetAll to reboot or factory-reset...\n", deviceID.c_str(), (now/1000/3600));
+    server->send(200, "text/plain", newString);
 }
 
 void SinricSwitch::handleReset() {

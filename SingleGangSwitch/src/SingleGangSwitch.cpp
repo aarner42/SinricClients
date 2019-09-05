@@ -22,8 +22,9 @@ void resetModule();
 void rebootModule();
 void updateButtonState()  ICACHE_RAM_ATTR;
 
-#define SKETCH_VERSION "v20190902-2200"
+#define SKETCH_VERSION "v20190903-1605"
 #define SKETCH_NAME "singleGangSwitch"
+
 DeviceConfigurator* dev1 = nullptr;
 SinricSwitch *sinricSwitch = nullptr;
 FirmwareUpdater* fwFetcher = nullptr;
@@ -45,14 +46,14 @@ void setup() {
     Serial.print("LAN IP addr: ");
     Serial.println(WiFi.localIP());
 
-    fwFetcher = new FirmwareUpdater(SKETCH_NAME, SKETCH_VERSION, 21600000);
-
+    fwFetcher = new FirmwareUpdater(SKETCH_NAME, SKETCH_VERSION, 3600000);
+    
     dev1 = new DeviceConfigurator(CONFIG_FILE_NAME);
     swCfg = dev1->getConfig();
 
     attachInterrupt(digitalPinToInterrupt(swCfg.inputPin), updateButtonState, FALLING);
     sinricSwitch = new SinricSwitch(swCfg.apiKey, swCfg.deviceID, 80, closeRelay, openRelay, alertViaLed, rebootModule, resetModule);
-
+    Serial.printf("Pin config is: LED:%d INPUT:%d RELAY:%d ON-level:%d OFF-level:%d\n", swCfg.ledPin, swCfg.inputPin, swCfg.triggerPin, swCfg.onLevel, swCfg.offLevel);
     pinMode(swCfg.ledPin, OUTPUT);
     pinMode(swCfg.triggerPin, OUTPUT);
     pinMode(swCfg.inputPin, INPUT_PULLUP);
