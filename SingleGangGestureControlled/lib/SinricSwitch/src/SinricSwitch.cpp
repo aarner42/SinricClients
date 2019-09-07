@@ -42,8 +42,7 @@ void SinricSwitch::sinricLoop() {
         }
     } else {
         if (pingTimeStamp == 0 || ((millis() - pingTimeStamp) > 60000)) {
-            Serial.println(
-                    "No connection to Sinric cloud - sending data to force webSocket to realize disconnect happened");
+            Serial.println("No connection to Sinric cloud - sending data to force webSocket to realize disconnect happened");
             webSocket.sendTXT("H");
             pingTimeStamp = millis();
 
@@ -109,8 +108,6 @@ void SinricSwitch::startSinricClient(String apiKey) {
 }
 
 void SinricSwitch::webSocketEvent(WStype_t type, uint8_t *payload, size_t length) {
-    Serial.print("WebSocketEvent:");
-    Serial.println(type);
 
     switch (type) {
         case WStype_ERROR: {
@@ -160,13 +157,18 @@ void SinricSwitch::webSocketEvent(WStype_t type, uint8_t *payload, size_t length
             // For Light device type
             // Look at the light example in github
 
-            DynamicJsonBuffer jsonBuffer;
-            JsonObject &json = jsonBuffer.parseObject((char *) payload);
-            String deviceId = json["deviceId"];
-            String action = json["action"];
+            DynamicJsonDocument jsonDoc(1024);
+            auto error = deserializeJson(jsonDoc, payload);
+            if (error) {
+                Serial.printf("SEVERE - Can't deserialize JSON object from WebSocket stream:%s!\n", error.c_str());
+                return;
+            }
+
+            String deviceId = jsonDoc["deviceId"];
+            String action = jsonDoc["action"];
 
             if (action == "setPowerState") { // Switch or Light
-                String value = json["value"];
+                String value = jsonDoc["value"];
                 if (value == "ON") {
                     sinricOn(deviceId);
                 } else {
@@ -229,11 +231,11 @@ void SinricSwitch::sinricOff(String id) {
 
 void SinricSwitch::handleRoot() {
     uint64_t now = millis();
-//    char buff[24];
-//    sprintf(buff, "%" PRIu64, now / 1000 / 3600);
-    char newString[128];
-    sprintf(newString, "deviceID=%s : Uptime is %llu hours - Call  /reboot or /resetAll to reboot or factory-reset...\n", deviceID.c_str(), (now/1000/3600));
-    server->send(200, "text/plain", newString);
+    char buff[21];
+    sprintf(buff, "%" PRIu64, now / 1000);
+    server->send(200, "text/plain",
+                 "Uptime: " + String(buff) + " seconds.  Call /reset if you want to reset me (deviceID=" + deviceID +
+                 ")...");
 }
 
 void SinricSwitch::handleReset() {
@@ -254,16 +256,15 @@ void SinricSwitch::setPowerState(bool newState) {
 // Call ONLY If status changed manually. DO NOT CALL THIS IN loop() and overload the server. 
 void SinricSwitch::setPowerStateOnServer(const char *value) {
     Serial.print("Updating status on server...");
-    DynamicJsonBuffer jsonBuffer;
-    JsonObject& root = jsonBuffer.createObject();
 
     String sendString = String(deviceID.c_str());  //god c sucks balls when it comes to strings.  stupid carriage returns
     sendString.replace("\r", "");
-    root["deviceId"] = sendString;
-    root["action"] = "setPowerState";
-    root["value"] = value;
+
+    StaticJsonDocument<64> outbound;
+    outbound["deviceId"] = sendString;
+    outbound["action"] = "setPowerState";
+    outbound["value"] = value;
     StreamString databuf;
-    root.printTo(databuf);
-    Serial.println(databuf);
+    serializeJson(outbound, databuf);
     webSocket.sendTXT(databuf);
 }
