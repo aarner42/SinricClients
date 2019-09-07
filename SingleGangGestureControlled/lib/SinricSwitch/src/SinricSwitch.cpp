@@ -9,7 +9,8 @@ SinricSwitch::SinricSwitch() {
 //useful constructor
 SinricSwitch::SinricSwitch(String apiKey, String device_id, unsigned int port, vCallBack onCB,
                            vCallBack offCB, vCallBack alertCB, vCallBack rebootCB, vCallBack resetCB) {
-    deviceID = device_id;
+    deviceID = std::move(device_id);
+    connectedToSinric=false;
     onCallback = onCB;
     offCallback = offCB;
     alertCallback = alertCB;
@@ -17,7 +18,7 @@ SinricSwitch::SinricSwitch(String apiKey, String device_id, unsigned int port, v
     resetCallback = resetCB;
     powerState = false;
     startWebServer(port);
-    startSinricClient(apiKey);
+    startSinricClient(std::move(apiKey));
     heartbeatTimestamp = 0;
     pingTimeStamp = 0;
     Serial.print("Registered switch with deviceID=[");
@@ -26,7 +27,7 @@ SinricSwitch::SinricSwitch(String apiKey, String device_id, unsigned int port, v
 }
 
 //<<destructor>>
-SinricSwitch::~SinricSwitch() {/*nothing to destruct*/}
+SinricSwitch::~SinricSwitch() = default;
 
 void SinricSwitch::sinricLoop() {
     webSocket.loop();
@@ -54,7 +55,7 @@ void SinricSwitch::sinricLoop() {
 
 
 void SinricSwitch::webLoop() {
-    if (server != NULL) {
+    if (server != nullptr) {
         server->handleClient();
         delay(1);
     }
@@ -92,7 +93,7 @@ void SinricSwitch::startWebServer(unsigned int localPort) {
     Serial.println(localPort);
 }
 
-void SinricSwitch::startSinricClient(String apiKey) {
+void SinricSwitch::startSinricClient(const String& apiKey) {
     webSocket.begin("iot.sinric.com", 80, "/");
 
     // event handler uses anonymous function to pass in instance method instead of free-member/static
@@ -183,10 +184,16 @@ void SinricSwitch::webSocketEvent(WStype_t type, uint8_t *payload, size_t length
             connectedToSinric = true;
             Serial.printf("[WSc] get binary length: %u\n", length);
             break;
+        case WStype_PING:
+            connectedToSinric = true;
+            break;
+        case WStype_PONG:
+            connectedToSinric = true;
+            break;
     }
 }
 
-void SinricSwitch::sinricOn(String id) {
+void SinricSwitch::sinricOn(const String& id) {
     if (deviceID.startsWith(id))
     {
         Serial.print("Turn on  device id: [");
@@ -208,7 +215,7 @@ void SinricSwitch::sinricOn(String id) {
     }
 }
 
-void SinricSwitch::sinricOff(String id) {
+void SinricSwitch::sinricOff(const String& id) {
     if (deviceID.startsWith(id))
     {
         Serial.print("Turn off device id: [");
@@ -260,7 +267,7 @@ void SinricSwitch::setPowerStateOnServer(const char *value) {
     String sendString = String(deviceID.c_str());  //god c sucks balls when it comes to strings.  stupid carriage returns
     sendString.replace("\r", "");
 
-    StaticJsonDocument<64> outbound;
+    DynamicJsonDocument outbound(128);
     outbound["deviceId"] = sendString;
     outbound["action"] = "setPowerState";
     outbound["value"] = value;
