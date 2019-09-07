@@ -1,27 +1,26 @@
+#include <SinricSwitch.h>
+#include <DeviceConfigurator.h>
+#include <SinricSwitch3Way.h>
+#include <CurrentSense.h>
+
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
-#include <ArduinoOTA.h>
+#include <WiFiManager.h>
+#include <FirmwareUpdater.h>
 
-#include <CurrentSense.h>
-#include <SinricSwitch3Way.h>
-#include <SinricSwitch.h>
-
-#define MyApiKey "d66b0116-ac4f-43ed-9087-5d0e154554c4"
-#define MySSID "Dutenhoefer"
-#define MyWifiPassword "CepiCire99"
-
-#define DEVICE_ID_3WAY "5c3944433a54d866e07086c7"    // TangoWhiskeyTwo - deviceId from sinric.com dashboard.
-#define DEVICE_ID_1POL "5c5906ed7c472c33aaff46a1"   // AlphaBravoFour
-
-#define LAN_HOSTNAME  "TW2-AB4"
-
-/************ define pins *********/
+#define LAN_HOSTNAME  "ESP_NoConfig"
+#define CONFIG_FILE_1NAME "/sinricSwitch1.txt"
+#define CONFIG_FILE_2NAME "/sinricSwitch2.txt"
+#define SKETCH_VERSION "v20190907-1700"
+#define SKETCH_NAME "singlePlusThreeWay"
+/************ define pins ********
 #define RELAY_3WAY   D1   // D1 drives 120v relay for three-way setup
 #define CONTACT_3WAY D3   // D3 connects to three-way NO switch contact (low volt side)
 #define LED_3WAY     D4   // D4 powers three-way switch illumination
-#define RELAY_1POL   D2   // D2 drives NPN transistor base -> optoCoupler -> triac
+#define swCfg1Pole.triggerPin   D2   // D2 drives NPN transistor base -> optoCoupler -> triac
 #define CONTACT_1POL D5   // D5 connects to single pole NO switch contact (low volt side)
 #define LED_1POL     D6   // D6 powers single-pole switch illumination
+*/
 
 void alertViaLed();
 
@@ -33,52 +32,65 @@ void onePoleOff();
 void setLedState(bool currentFlow, uint8_t ledPin);
 
 void resetModule();
-void initializeOTA();
+void rebootModule();
+void updateButtonStateOne()  ICACHE_RAM_ATTR;
+void updateButtonStateTwo()  ICACHE_RAM_ATTR;
+
 void toggleRelay(uint8_t pin);
 
+DeviceConfigurator* dev1 = nullptr;
+DeviceConfigurator* dev2 = nullptr;
 SinricSwitch3Way *sinricSwitch3Way = nullptr;
 SinricSwitch *sinricSwitch1Pol = nullptr;
+FirmwareUpdater* fwFetcher = nullptr;
+IOTConfig swCfg3Way;
+IOTConfig swCfg1Pole;
+volatile byte buttonPressedOne = 0;
+volatile byte buttonPressedTwo = 0;
 
 void setup() {
-
-    pinMode(LED_1POL, OUTPUT);
-    pinMode(LED_3WAY, OUTPUT);
-    pinMode(RELAY_1POL, OUTPUT);
-    pinMode(RELAY_3WAY, OUTPUT);
-    pinMode(CONTACT_1POL, INPUT_PULLUP);
-    pinMode(CONTACT_3WAY, INPUT_PULLUP);
-    pinMode(A0, INPUT);
-
-    digitalWrite(LED_1POL, HIGH);   // default switch illumination to on
-    digitalWrite(LED_3WAY, HIGH);   // default switch illumination to on
-
     Serial.begin(115200);
+    Serial.println("************************ " SKETCH_VERSION " ***************************");
 
-    WiFi.begin(MySSID, MyWifiPassword);
-    Serial.println();
-    Serial.print("Connecting to Wifi: ");
-    Serial.println(MySSID);
+    Serial.print("Initializing WiFi Manager to capture config with AP Name: ");
+    Serial.println(LAN_HOSTNAME);
 
-    // Waiting for Wifi connect
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(150);
-        Serial.print(".");
-    }
+    WiFiManager wiFiManager;
+    wiFiManager.autoConnect(LAN_HOSTNAME);
 
-    //process setup requiring WiFi
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("");
-        Serial.print("WiFi connected. ");
-        Serial.print("IP address: ");
-        Serial.println(WiFi.localIP());
-        Serial.print("OTA Host: ");
-        Serial.println(LAN_HOSTNAME);
+    Serial.println("");
+    Serial.print("WiFi connected (as client.) ");
+    Serial.print("LAN IP addr: ");
+    Serial.println(WiFi.localIP());
 
-        initializeOTA();
+    fwFetcher = new FirmwareUpdater(SKETCH_NAME, SKETCH_VERSION, 3600000);
+    
+    dev1 = new DeviceConfigurator(CONFIG_FILE_1NAME);
+    swCfg3Way = dev1->getConfig();
+    dev2 = new DeviceConfigurator(CONFIG_FILE_2NAME);
+    swCfg1Pole = dev2->getConfig();
+    
 
-        sinricSwitch3Way = new SinricSwitch3Way(MyApiKey, DEVICE_ID_3WAY, 80, toggleThreeWay, alertViaLed, resetModule);
-        sinricSwitch1Pol = new SinricSwitch    (MyApiKey, DEVICE_ID_1POL, 88, onePoleOn, onePoleOff, alertViaLed, resetModule);
-    }
+    attachInterrupt(digitalPinToInterrupt(swCfg3Way.inputPin),  updateButtonStateOne, FALLING);
+    attachInterrupt(digitalPinToInterrupt(swCfg1Pole.inputPin), updateButtonStateTwo, FALLING);
+
+    sinricSwitch3Way = new SinricSwitch3Way(swCfg3Way.apiKey, swCfg3Way.deviceID, 80, toggleThreeWay, alertViaLed, rebootModule, resetModule);
+    sinricSwitch1Pol = new SinricSwitch    (swCfg1Pole.apiKey, swCfg1Pole.deviceID, 88, onePoleOn, onePoleOff, alertViaLed, rebootModule, resetModule);
+    Serial.printf("3-Way  Pin config is: LED:%d INPUT:%d RELAY:%d ON-level:%d OFF-level:%d\n", swCfg3Way.ledPin, swCfg3Way.inputPin, swCfg3Way.triggerPin, swCfg3Way.onLevel, swCfg3Way.offLevel);
+    Serial.printf("1-Pole Pin config is: LED:%d INPUT:%d RELAY:%d ON-level:%d OFF-level:%d\n", swCfg1Pole.ledPin, swCfg1Pole.inputPin, swCfg1Pole.triggerPin, swCfg1Pole.onLevel, swCfg1Pole.offLevel);
+
+    pinMode(A0, INPUT);
+    pinMode(swCfg3Way.ledPin, OUTPUT);
+    pinMode(swCfg3Way.triggerPin, OUTPUT);
+    pinMode(swCfg3Way.inputPin, INPUT_PULLUP);
+    digitalWrite(swCfg3Way.ledPin, HIGH);    //switch illumination to on
+    digitalWrite(swCfg3Way.triggerPin, swCfg3Way.offLevel);   //high-voltage side off
+
+    pinMode(swCfg1Pole.ledPin, OUTPUT);
+    pinMode(swCfg1Pole.triggerPin, OUTPUT);
+    pinMode(swCfg1Pole.inputPin, INPUT_PULLUP);
+    digitalWrite(swCfg1Pole.ledPin, HIGH);    //switch illumination to on
+    digitalWrite(swCfg1Pole.triggerPin, swCfg1Pole.offLevel);   //high-voltage side off
 }
 
 void loop() {
@@ -89,38 +101,66 @@ void loop() {
     //check whether the lights are drawing current (3-Way) or the relay is closed (1-Pole)
     //(calcCurrentFlow samples for 250 msec synchronously)
     bool powerState3Way = (calcCurrentFlow(false) > CURRENT_FLOW_NONZERO_THRESHOLD);
-    bool powerState1Pole = digitalRead(RELAY_1POL) != LOW;
-
-    //publish the current powerState
     sinricSwitch3Way->setPowerState(powerState3Way);
+    setLedState(powerState3Way, swCfg3Way.ledPin);
+
+    bool powerState1Pole = digitalRead(swCfg1Pole.triggerPin) == swCfg1Pole.onLevel;
     sinricSwitch1Pol->setPowerState(powerState1Pole);
+    setLedState(powerState1Pole, swCfg1Pole.ledPin);
 
-    //set the LED state as needed
-    setLedState(powerState1Pole, LED_1POL);
-    setLedState(powerState3Way, LED_3WAY);
+  if (buttonPressedOne > 0) {
+      Serial.print("manual button press - switch 1: " );
+      Serial.println(buttonPressedOne);
+      buttonPressedOne--;
+      toggleThreeWay();
+  }
 
-    //check for and handle manual presses of the switches
-    if (digitalRead(CONTACT_3WAY) == LOW) {
-        toggleThreeWay();
-    }
-    if (digitalRead(CONTACT_1POL) == LOW) {
-        toggleOnePole();
-    }
+  if (buttonPressedTwo > 0) {
+      Serial.print("manual button press - switch 2: " );
+      Serial.println(buttonPressedTwo);
+      buttonPressedTwo--;
+      toggleOnePole();
+  }
 
-    ArduinoOTA.handle();
+  if (fwFetcher->isUpdateCheckDue()) {
+      fwFetcher->checkServerForUpdate();
+  }
+
+}
+
+void updateButtonStateOne() {
+        static unsigned long last_interrupt_time = 0;
+        unsigned long interrupt_time = millis();
+        // If interrupts come faster than 200ms, assume it's a bounce and ignore
+        if (interrupt_time - last_interrupt_time > 200)
+        {
+            buttonPressedOne++;
+        }
+        last_interrupt_time = interrupt_time;
+}
+void updateButtonStateTwo() {
+        static unsigned long last_interrupt_time = 0;
+        unsigned long interrupt_time = millis();
+        // If interrupts come faster than 200ms, assume it's a bounce and ignore
+        if (interrupt_time - last_interrupt_time > 200)
+        {
+            buttonPressedTwo++;
+        }
+        last_interrupt_time = interrupt_time;
+
 }
 
 void toggleThreeWay() {
     Serial.println("Toggling relay (3Way)...");
-    toggleRelay(RELAY_3WAY);
+    toggleRelay(swCfg3Way.triggerPin);
 }
 
 void toggleOnePole() {
     Serial.println("Toggling relay (1Pole)...");
-    toggleRelay(RELAY_1POL);
+    toggleRelay(swCfg1Pole.triggerPin);
 }
 
-void toggleRelay(const uint8_t pin) {
+void toggleRelay(uint8_t pin) {
     int currentState = digitalRead(pin);
     if (currentState)
         digitalWrite(pin, LOW);
@@ -130,11 +170,11 @@ void toggleRelay(const uint8_t pin) {
 
 void onePoleOn() {
     Serial.println("Closing Single Pole relay...");
-    digitalWrite(RELAY_1POL, HIGH);
+    digitalWrite(swCfg1Pole.triggerPin, swCfg1Pole.onLevel);
 }
 void onePoleOff() {
     Serial.println("Opening Single Pole relay...");
-    digitalWrite(RELAY_1POL, LOW);
+    digitalWrite(swCfg1Pole.triggerPin, swCfg1Pole.offLevel);
 }
 
 void setLedState(bool currentFlowing, uint8_t ledPin) {
@@ -145,40 +185,28 @@ void setLedState(bool currentFlowing, uint8_t ledPin) {
 }
 
 void alertViaLed() {
-    //blink the led for 2.4 sec
-    for (int i = 0; i < 24; i++) {
-        digitalWrite(LED_3WAY, LOW);
-        digitalWrite(LED_1POL, LOW);
+    //blink the leds for 2.4 sec
+    for(int i=0; i<24; i++) {
+        digitalWrite(swCfg3Way.ledPin, LOW);
+        digitalWrite(swCfg1Pole.ledPin, LOW);
         delay(50);
-        digitalWrite(LED_3WAY, HIGH);
-        digitalWrite(LED_1POL, HIGH);
+        digitalWrite(swCfg3Way.ledPin, HIGH);
+        digitalWrite(swCfg1Pole.ledPin, HIGH);
         delay(50);
     }
 }
 
 void resetModule() {
-    Serial.println("Someone requested a reset...");
-    ESP.restart();
+  Serial.println("Someone requested a complete reset...");
+  SPIFFS.begin();
+  SPIFFS.remove(CONFIG_FILE_1NAME);
+  SPIFFS.remove(CONFIG_FILE_2NAME);
+  ESP.restart();
 }
 
-void initializeOTA() {
-    Serial.println("Setting up ArduinoOTA handlers...");
-    ArduinoOTA.setPort(8266);
-    ArduinoOTA.setHostname(LAN_HOSTNAME);
-    ArduinoOTA.onStart([]() { Serial.println("Start"); });
-    ArduinoOTA.onEnd([]() { Serial.println("\nEnd"); });
-    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-        Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
-    });
-    ArduinoOTA.onError([](ota_error_t error) {
-        Serial.printf("Error[%u]: ", error);
-        if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
-        else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
-        else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
-        else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-        else if (error == OTA_END_ERROR) Serial.println("End Failed");
-    });
-    ArduinoOTA.begin();
+void rebootModule() {
+    Serial.println("Someone requested a reboot...");
+    ESP.restart();
 }
 
 
