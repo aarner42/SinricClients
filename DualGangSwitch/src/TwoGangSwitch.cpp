@@ -1,27 +1,16 @@
+#include <SinricSwitch.h>
+#include <DeviceConfigurator.h>
+
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
-#include <ArduinoOTA.h>
+#include <WiFiManager.h>
+#include <FirmwareUpdater.h>
 
-#include <SinricSwitch.h>
-#include <ESPAsyncWebServer.h>
-#include <ESPAsyncWiFiManager.h>
-#include <DNSServer.h>
-
-#define MyApiKey "d66b0116-ac4f-43ed-9087-5d0e154554c4"
-//#define MySSID "Dutenhoefer"
-//#define MyWifiPassword "CepiCire99"
-
-#define DEVICE_ID_1 "5cba5d061061436d83613048"  // deviceId is the ID assgined to your smart-home-device in sinric.com dashboard.
-#define DEVICE_ID_2 "5cba5d181061436d8361304b"  // deviceId is the ID assgined to your smart-home-device in sinric.com dashboard.
-#define LAN_HOSTNAME  "TangoGolf56"
-/************ define pins *********/
-#define CONTACT_1 D3   // D3 connects to momentary switch 1
-#define LED_1     D7   // D7 powers switch illumination 1
-#define RELAY_1   D0   // D0 drives Triac 1
-
-#define CONTACT_2 D4   // D4 connects to momentary switch 2
-#define LED_2     D8   // D8 powers switch illumination 2
-#define RELAY_2   D1   // D1 drives Triac 2
+#define LAN_HOSTNAME  "ESP_NoConfig"
+#define CONFIG_FILE_1NAME "/sinricSwitch1.txt"
+#define CONFIG_FILE_2NAME "/sinricSwitch2.txt"
+#define SKETCH_VERSION "v20190907-1700"
+#define SKETCH_NAME "dualGangSwitch"
 
 void alertViaLed();
 void closeRelayOne();
@@ -32,54 +21,64 @@ void openRelayTwo();
 void toggleRelayTwo();
 
 void resetModule();
-void initializeOTA();
+void rebootModule();
 void updateButtonStateOne()  ICACHE_RAM_ATTR;
 void updateButtonStateTwo()  ICACHE_RAM_ATTR;
 
+DeviceConfigurator* dev1 = nullptr;
+DeviceConfigurator* dev2 = nullptr;
 SinricSwitch *sinricSwitchOne = nullptr;
 SinricSwitch *sinricSwitchTwo = nullptr;
-
-AsyncWebServer server(80);
-DNSServer dns;
-
+FirmwareUpdater* fwFetcher = nullptr;
+IOTConfig swCfg1;
+IOTConfig swCfg2;
 volatile byte buttonPressedOne = 0;
 volatile byte buttonPressedTwo = 0;
-unsigned long lastDebounceTimeOne = 0;
-unsigned long lastDebounceTimeTwo = 0;
-unsigned const long debounceDelay = 50;
+
 
 void setup() {
-
-    pinMode(LED_1, OUTPUT);
-    pinMode(RELAY_1, OUTPUT);
-    pinMode(CONTACT_1, INPUT_PULLUP);
-    pinMode(LED_2, OUTPUT);
-    pinMode(RELAY_2, OUTPUT);
-    pinMode(CONTACT_2, INPUT_PULLUP);
-
-    digitalWrite(LED_1, HIGH);    //switch illumination to on
-    digitalWrite(LED_2, HIGH);    //switch illumination to on
-    digitalWrite(RELAY_1, LOW);   //high-voltage side off
-    digitalWrite(RELAY_2, LOW);   //high-voltage side off
     Serial.begin(115200);
-  
-    AsyncWiFiManager wiFiManager(&server, &dns);
-    wiFiManager.autoConnect(LAN_HOSTNAME);
+    Serial.println("************************ " SKETCH_VERSION " ***************************");
 
-    attachInterrupt(digitalPinToInterrupt(CONTACT_1), updateButtonStateOne, FALLING);
-    attachInterrupt(digitalPinToInterrupt(CONTACT_2), updateButtonStateTwo, FALLING);
-
-    Serial.println("");
-    Serial.print("WiFi connected. ");
-    Serial.print("IP address: ");
-    Serial.println(WiFi.localIP());
-    Serial.print("OTA Host: ");
+    Serial.print("Initializing WiFi Manager to capture config with AP Name: ");
     Serial.println(LAN_HOSTNAME);
 
-    initializeOTA();
+    WiFiManager wiFiManager;
+    wiFiManager.autoConnect(LAN_HOSTNAME);
 
-    sinricSwitchOne = new SinricSwitch(MyApiKey, DEVICE_ID_1, 80, closeRelayOne, openRelayOne, alertViaLed, resetModule);
-    sinricSwitchTwo = new SinricSwitch(MyApiKey, DEVICE_ID_2, 88, closeRelayTwo, openRelayTwo, alertViaLed, resetModule);
+    Serial.println("");
+    Serial.print("WiFi connected (as client.) ");
+    Serial.print("LAN IP addr: ");
+    Serial.println(WiFi.localIP());
+
+    fwFetcher = new FirmwareUpdater(SKETCH_NAME, SKETCH_VERSION, 3600000);
+    
+    dev1 = new DeviceConfigurator(CONFIG_FILE_1NAME);
+    swCfg1 = dev1->getConfig();
+    dev2 = new DeviceConfigurator(CONFIG_FILE_2NAME);
+    swCfg2 = dev2->getConfig();
+    
+
+    attachInterrupt(digitalPinToInterrupt(swCfg1.inputPin), updateButtonStateOne, FALLING);
+    attachInterrupt(digitalPinToInterrupt(swCfg2.inputPin), updateButtonStateTwo, FALLING);
+
+    sinricSwitchOne = new SinricSwitch(swCfg1.apiKey, swCfg1.deviceID, 80, closeRelayOne, openRelayOne, alertViaLed, rebootModule, resetModule);
+    sinricSwitchTwo = new SinricSwitch(swCfg2.apiKey, swCfg2.deviceID, 88, closeRelayTwo, openRelayTwo, alertViaLed, rebootModule, resetModule);
+    Serial.printf("SW1 Pin config is: LED:%d INPUT:%d RELAY:%d ON-level:%d OFF-level:%d\n", swCfg1.ledPin, swCfg1.inputPin, swCfg1.triggerPin, swCfg1.onLevel, swCfg1.offLevel);
+    Serial.printf("SW2 Pin config is: LED:%d INPUT:%d RELAY:%d ON-level:%d OFF-level:%d\n", swCfg2.ledPin, swCfg2.inputPin, swCfg2.triggerPin, swCfg2.onLevel, swCfg2.offLevel);
+    
+    pinMode(swCfg1.ledPin, OUTPUT);
+    pinMode(swCfg1.triggerPin, OUTPUT);
+    pinMode(swCfg1.inputPin, INPUT_PULLUP);
+    digitalWrite(swCfg1.ledPin, HIGH);    //switch illumination to on
+    digitalWrite(swCfg1.triggerPin, swCfg1.offLevel);   //high-voltage side off
+
+    pinMode(swCfg2.ledPin, OUTPUT);
+    pinMode(swCfg2.triggerPin, OUTPUT);
+    pinMode(swCfg2.inputPin, INPUT_PULLUP);
+    digitalWrite(swCfg2.ledPin, HIGH);    //switch illumination to on
+    digitalWrite(swCfg2.triggerPin, swCfg2.offLevel);   //high-voltage side off
+
 }
 
 
@@ -88,19 +87,21 @@ void loop() {
   sinricSwitchTwo -> loop();
 
   if (buttonPressedOne > 0) {
-      Serial.print("manual press - switch 1: " );
+      Serial.print("manual button press - switch 1: " );
       Serial.println(buttonPressedOne);
       buttonPressedOne--;
       toggleRelayOne();
   }
   if (buttonPressedTwo > 0) {
-      Serial.print("manual press - switch 2: " );
+      Serial.print("manual button press - switch 2: " );
       Serial.println(buttonPressedTwo);
       buttonPressedTwo--;
       toggleRelayTwo();
   }
+    if (fwFetcher->isUpdateCheckDue()) {
+      fwFetcher->checkServerForUpdate();
+  }
 
-  ArduinoOTA.handle();
 }
 
 void updateButtonStateOne() {
@@ -126,85 +127,62 @@ void updateButtonStateTwo() {
 
 void toggleRelayOne() {
     Serial.println("Toggling switch 1...");
-    int currentState = digitalRead(RELAY_1);
-    if (currentState) {
-        digitalWrite(RELAY_1, LOW);
-        digitalWrite(LED_1, HIGH);
-    }
-    else {
-        digitalWrite(RELAY_1, HIGH);
-        digitalWrite(LED_1, LOW);
-    }
+    int currentState = digitalRead(swCfg1.triggerPin);
+    digitalWrite(swCfg1.triggerPin, !currentState);
+    digitalWrite(swCfg1.ledPin, currentState);
 }
 void toggleRelayTwo() {
     Serial.println("Toggling switch 2...");
-    int currentState = digitalRead(RELAY_2);
-    if (currentState) {
-        digitalWrite(RELAY_2, LOW);
-        digitalWrite(LED_2, HIGH);
-    }
-    else {
-        digitalWrite(RELAY_2, HIGH);
-        digitalWrite(LED_2, LOW);
-
-    }
+    int currentState = digitalRead(swCfg2.triggerPin);
+    digitalWrite(swCfg2.triggerPin, !currentState);
+    digitalWrite(swCfg2.ledPin, currentState);
 }
 
 void openRelayOne() {
     Serial.println("Opening relay 1...");
-    digitalWrite(RELAY_1, LOW);
-    digitalWrite(LED_1, HIGH);
+    digitalWrite(swCfg1.triggerPin, swCfg1.offLevel);
+    digitalWrite(swCfg1.ledPin, HIGH);
 }
 void openRelayTwo() {
     Serial.println("Opening relay 2...");
-    digitalWrite(RELAY_2, LOW);
-    digitalWrite(LED_2, HIGH);
+    digitalWrite(swCfg2.triggerPin, swCfg2.offLevel);
+    digitalWrite(swCfg2.ledPin, HIGH);
 }
 
 void closeRelayOne() {
     Serial.println("Closing relay 1...");
-    digitalWrite(RELAY_1, HIGH);
-    digitalWrite(LED_1, LOW);
+    digitalWrite(swCfg1.triggerPin, swCfg1.onLevel);
+    digitalWrite(swCfg1.ledPin, LOW);
 }
 void closeRelayTwo() {
     Serial.println("Closing relay 2...");
-    digitalWrite(RELAY_2, HIGH);
-    digitalWrite(LED_2, LOW);
+    digitalWrite(swCfg2.triggerPin, swCfg2.onLevel);
+    digitalWrite(swCfg2.ledPin, LOW);
 }
 
 void alertViaLed() {
     //blink the leds for 2.4 sec
     for(int i=0; i<24; i++) {
-        digitalWrite(LED_1, LOW);
-        digitalWrite(LED_2, LOW);
+        digitalWrite(swCfg1.ledPin, LOW);
+        digitalWrite(swCfg2.ledPin, LOW);
         delay(50);
-        digitalWrite(LED_1, HIGH);
-        digitalWrite(LED_2, HIGH);
+        digitalWrite(swCfg1.ledPin, HIGH);
+        digitalWrite(swCfg2.ledPin, HIGH);
         delay(50);
     }
 }
 
 void resetModule() {
-  Serial.println("Someone requested a reset...");
+  Serial.println("Someone requested a complete reset...");
+  SPIFFS.begin();
+  SPIFFS.remove(CONFIG_FILE_1NAME);
+  SPIFFS.remove(CONFIG_FILE_2NAME);
   ESP.restart();
 }
 
-void initializeOTA() {
-    Serial.println("Setting up ArduinoOTA handlers...");
-    ArduinoOTA.setPort(8266);
-    ArduinoOTA.setHostname(LAN_HOSTNAME);
-    ArduinoOTA.onStart([]() {  Serial.println("Start");  });
-    ArduinoOTA.onEnd([]()   {  Serial.println("\nEnd");  });
-    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {  Serial.printf("Progress: %u%%\r", (progress / (total / 100)));   });
-    ArduinoOTA.onError([](ota_error_t error) {
-        Serial.printf("Error[%u]: ", error);
-        if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
-        else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
-        else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
-        else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-        else if (error == OTA_END_ERROR) Serial.println("End Failed");
-    });
-    ArduinoOTA.begin();
+void rebootModule() {
+    Serial.println("Someone requested a reboot...");
+    ESP.restart();
 }
 
 
