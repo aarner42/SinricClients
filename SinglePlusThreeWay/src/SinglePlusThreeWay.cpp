@@ -17,7 +17,7 @@
 #define RELAY_3WAY   D1   // D1 drives 120v relay for three-way setup
 #define CONTACT_3WAY D3   // D3 connects to three-way NO switch contact (low volt side)
 #define LED_3WAY     D4   // D4 powers three-way switch illumination
-#define swCfg1Pole.triggerPin   D2   // D2 drives NPN transistor base -> optoCoupler -> triac
+#define RELAY_1POL   D2   // D2 drives NPN transistor base -> optoCoupler -> triac
 #define CONTACT_1POL D5   // D5 connects to single pole NO switch contact (low volt side)
 #define LED_1POL     D6   // D6 powers single-pole switch illumination
 */
@@ -69,7 +69,7 @@ void setup() {
     swCfg3Way = dev1->getConfig();
     dev2 = new DeviceConfigurator(CONFIG_FILE_2NAME);
     swCfg1Pole = dev2->getConfig();
-    
+
 
     attachInterrupt(digitalPinToInterrupt(swCfg3Way.inputPin),  updateButtonStateOne, FALLING);
     attachInterrupt(digitalPinToInterrupt(swCfg1Pole.inputPin), updateButtonStateTwo, FALLING);
