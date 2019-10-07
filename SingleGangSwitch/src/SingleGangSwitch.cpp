@@ -1,3 +1,4 @@
+/*
 #include <SinricSwitch.h>
 #include <DeviceConfigurator.h>
 
@@ -7,7 +8,9 @@
 #include <FirmwareUpdater.h>
 
 
-/************ define pins - Now in Config File *********/
+*/
+/************ define pins - Now in Config File *********//*
+
 //#define RELAY   D1   // D1 drives 120v relay
 //#define CONTACT D3   // D3 connects to momentary switch
 //#define LED D4       // D4 powers switch illumination
@@ -144,3 +147,4 @@ void rebootModule() {
 
 
 
+*/
