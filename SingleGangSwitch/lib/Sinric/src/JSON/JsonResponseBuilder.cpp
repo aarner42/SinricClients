@@ -2,7 +2,11 @@
 // Created by aarne on 10/4/2019.
 //
 
+#include <Arduino.h>
+#include <ArduinoJson.h>
+
 #include "JsonResponseBuilder.h"
+#include "../MessageID.h"
 
 JsonDocument JsonResponseBuilder::prepareResponse(JsonDocument& requestMessage) {
     DynamicJsonDocument responseMessage(1024);
@@ -32,20 +36,12 @@ JsonDocument JsonResponseBuilder::prepareEvent(String& deviceID, String& action,
     JsonObject payload = eventMessage.createNestedObject("payload");
     payload["action"] = action;
     payload["cause"] = cause;
-    payload["createdAt"] = NTPWrapper.getTimestamp();
+    payload["createdAt"] = ntpWrapper.getTimestamp();
     payload["deviceId"] = deviceID;
     MessageID msgId;
     payload["replyToken"] = msgId.getID();
     payload["type"] = "event";
     payload.createNestedObject("value");
     return eventMessage;
-}
-
-JsonDocument JsonResponseBuilder::getPowerStateResponse() {
-    return reinterpret_cast<const JsonDocument &>(nanl);
-}
-
-JsonDocument JsonResponseBuilder::getPowerLevelResponse() {
-    return reinterpret_cast<const JsonDocument &>(nanl);
 }
 

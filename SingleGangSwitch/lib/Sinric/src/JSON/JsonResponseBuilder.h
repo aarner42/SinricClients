@@ -14,10 +14,11 @@ class JsonResponseBuilder {
 private:
     const int VERSION = 1;
 
-    static JsonDocument prepareEvent(String& deviceID, String& action, const char* cause);
-    static NTPWrapper ntpWrapper;
+    NTPWrapper ntpWrapper;
 public:
     JsonDocument prepareResponse(JsonDocument&);
+
+    JsonDocument prepareEvent(String& deviceID, String& action, const char* cause);
 };
 
 

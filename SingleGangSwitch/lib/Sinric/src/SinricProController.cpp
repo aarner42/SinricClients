@@ -1,3 +1,4 @@
+#include <Communication/SinricMessage.h>
 //
 // Created by aarne on 10/4/2019.
 //
@@ -5,6 +6,7 @@
 #include "JSON/JsonFactory.h"
 
 #include <utility>
+#include <Devices/BinarySwitch.h>
 
 SinricProController::SinricProController(const String& socketAuth, String signingKey, String wsURL) :
     jsonFactory(socketAuth, std::move(signingKey)),
@@ -48,7 +50,6 @@ void SinricProController::disconnect() {
 
 void SinricProController::add(IDevice* newDevice, unsigned long eventsEveryMS) {
     newDevice->setEventsFrequency(eventsEveryMS);
-
     devices.push_back(newDevice);
     if (isConnected()) reconnect();
 }
@@ -58,9 +59,18 @@ void SinricProController::handle() {
     socketListener.handle();
 
     handleRequest();
+    handleDeviceUpdates();
     handleSendQueue();
 }
 
+void SinricProController::handleDeviceUpdates() {
+    for (auto device : devices) {
+        if (device->hasUpdate()) {
+            ServerUpdate* update = device->getUpdate();
+            //push to sendQueue
+        }
+    }
+}
 
 
 
@@ -92,303 +102,7 @@ bool SinricProController::handleCallbacks(const SinricEvent& transaction) {
             allOK = device->processRequest(transaction);
     }
     return allOK;
-/*
 
-    if (powerStateCallback && action == "setPowerState") {
-        bool powerState;
-        if (request_value["state"] == "On") powerState = true;
-        if (request_value["state"] == "Off") powerState = false;
-        success = powerStateCallback(deviceId, powerState);
-        response_value["state"] = powerState?"On":"Off";
-        return success;
-    }
-
-    // setPowerLevel
-    if (powerLevelCallback && action == "setPowerLevel") {
-        int powerLevel = request_value["powerLevel"];
-        success = powerLevelCallback(deviceId, powerLevel);
-        response_value["powerLevel"] = powerLevel;
-        return success;
-    }
-
-    // adjustPowerLevel
-    // input: relative powerlevel
-    // output: absolute powerLevel!
-    if (adjustPowerLevelCallback && action == "adjustPowerLevel") {
-        int powerLevelDelta = request_value["powerLevelDelta"];
-        success = adjustPowerLevelCallback(deviceId, powerLevelDelta);
-        response_value["powerLevel"] = powerLevelDelta;
-        return success;
-    }
-
-    // setBrightness
-    if (brightnessCallback && action == "setBrightness") {
-        int brightness = request_value["brightness"];
-        success = brightnessCallback(deviceId, brightness);
-        response_value["brightness"] = brightness;
-        return success;
-    }
-    // adjustBrightness
-    // get relative brightness (brightnessDelta) / return absolute brightness!
-    if (adjustBrightnessCallback && action == "adjustBrightness") {
-        int brightnessDelta = request_value["brightnessDelta"];
-        success = adjustBrightnessCallback(deviceId, brightnessDelta);
-        response_value["brightness"] = brightnessDelta;
-        return success;
-    }
-
-    // setColor
-    if (colorCallback && action == "setColor") {
-        unsigned char r, g, b;
-        r = request_value["color"]["r"];
-        g = request_value["color"]["g"];
-        b = request_value["color"]["b"];
-        success = colorCallback(deviceId, r, g, b);
-        response_value.createNestedObject("color");
-        response_value["color"]["r"] = r;
-        response_value["color"]["g"] = g;
-        response_value["color"]["b"] = b;
-        return success;
-    }
-
-    // setColorTemperature
-    if (colorTemperatureCallback && action == "setColorTemperature") {
-        int colorTemperature = request_value["ColorTemperature"];
-        success = colorTemperatureCallback(deviceId, colorTemperature);
-        response_value["ColorTemperature"] = colorTemperature;
-        return success;
-    }
-
-    // increaseColorTemperature
-    // input: none
-    // output colorTemperature
-    if (increaseColorTemperatureCallback && action == "increaseColorTemperature") {
-        int colorTemperature;
-        success = increaseColorTemperatureCallback(deviceId, colorTemperature);
-        response_value["colorTemperature"] = colorTemperature;
-        return success;
-    }
-
-    // decreaseColorTemperature
-    // input: none
-    // output: colorTemperature
-    if (decreaseColorTemperatureCallback && action == "decreaseColorTemperature") {
-        int colorTemperature;
-        success = decreaseColorTemperatureCallback(deviceId, colorTemperature);
-        response_value["colorTemperature"] = colorTemperature;
-        return success;
-    }
-
-    // targetTemperature
-    // input: temperature, optional: duration
-    // return: temperature
-    if (setTemperatureCallback && action == "targetTemperature") {
-        float temperature = request_value["temperature"];
-        const char* duration = request_value["schedule"]["duration"] | "";
-        success = setTemperatureCallback(deviceId, temperature, duration);
-        response_value["temperature"] = temperature;
-        return success;
-    }
-
-    // adjustTemperature
-    // input: relative temperature
-    // output: absolute temperature
-    if (adjustTemperatureCallback && action == "adjustTemperature") {
-        float temperature = request_value["temperature"];
-        success = adjustTemperatureCallback(deviceId, temperature);
-        response_value["temperature"] = temperature;
-        return success;
-    }
-
-    // setThermostatMode
-    if (setThermostatModeCallback && action == "setThermostatMode") {
-        ThermostatMode_t thermostatMode;
-
-        if (request_value["thermostatMode"] == "OFF") thermostatMode = thermostat_OFF;
-        if (request_value["thermostatMode"] == "COOL") thermostatMode = thermostat_COOL;
-        if (request_value["thermostatMode"] == "HEAT") thermostatMode = thermostat_HEAT;
-        if (request_value["thermostatMode"] == "AUTO") thermostatMode = thermostat_AUTO;
-
-        success = setThermostatModeCallback(deviceId, thermostatMode);
-
-        switch (thermostatMode) {
-            case thermostat_OFF:  response_value["thermostatMode"] = "OFF"; break;
-            case thermostat_COOL: response_value["thermostatMode"] = "COOL"; break;
-            case thermostat_HEAT: response_value["thermostatMode"] = "HEAT"; break;
-            case thermostat_AUTO: response_value["thermostatMode"] = "AUTO"; break;
-        }
-        return success;
-    }
-
-    // setLockState
-    if (lockStateCallback && action == "setLockState") {
-        bool lockState;
-        if (request_value["state"] == "lock") lockState = true;
-        if (request_value["state"] == "unlock") lockState = false;
-
-        success = lockStateCallback(deviceId, lockState);
-        response_value["state"] = lockState?"LOCKED":"UNLOCKED";
-        return success;
-    }
-
-    // setVolume
-    if (volumeCallback && action == "setVolume") {
-        int volume = request_value["volume"];
-        success = volumeCallback(deviceId, volume);
-        response_value["volume"] = volume;
-        return success;
-    }
-
-    // adjustVolume
-    // input: relative volume
-    // output: absolute volume
-    if (adjustVolumeCallback && action == "adjustVolume") {
-        int volume = request_value["volume"];
-        success = adjustVolumeCallback(deviceId, volume);
-        response_value["volume"] = volume;
-        return success;
-    }
-
-    // setMute
-    if (muteCallback && action == "setMute") {
-        bool mute = request_value["mute"];
-        success = muteCallback(deviceId, mute);
-        response_value["mute"] = mute;
-        return success;
-    }
-
-    // selectInput
-    if (selectInputCallback && action == "selectInput") {
-        String input = request_value["input"];
-
-        success = selectInputCallback(deviceId, input);
-
-        response_value["input"] = input;
-        return success;
-    }
-
-    // mediaControl
-    if (mediaControlCallback && action == "mediaControl") {
-        MediaControl_t mediaControl;
-        if (request_value["control"] == "FastForward") mediaControl = media_FastForward;
-        if (request_value["control"] == "Next") mediaControl = media_Next;
-        if (request_value["control"] == "Pause") mediaControl = media_Pause;
-        if (request_value["control"] == "Previous") mediaControl = media_Previous;
-        if (request_value["control"] == "Rewind") mediaControl = media_Rewind;
-        if (request_value["control"] == "StartOver") mediaControl = media_StartOver;
-        if (request_value["control"] == "Stop") mediaControl = media_Stop;
-
-        success = mediaControlCallback(deviceId, mediaControl);
-
-        switch (mediaControl) {
-            case media_FastForward : response_value["control"] = "FastForward"; break;
-            case media_Next : response_value["control"] = "Next"; break;
-            case media_Pause : response_value["control"] = "Pause"; break;
-            case media_Previous : response_value["control"] = "Previous"; break;
-            case media_Rewind : response_value["control"] = "Rewind"; break;
-            case media_StartOver : response_value["control"] = "StartOver"; break;
-            case media_Stop : response_value["control"] = "Stop"; break;
-        }
-        return success;
-    }
-
-    if (rangeValueCallback && action == "setRangeValue") {
-        int rangeValue = request_value["rangeValue"];
-        success = rangeValueCallback(deviceId, rangeValue);
-        response_value["rangeValue"] = rangeValue;
-        return success;
-    }
-
-    if (adjustRangeValueCallback && action == "adjustRangeValue") {
-        int rangeValueDelta = request_value["rangeValueDelta"];
-        success = adjustRangeValueCallback(deviceId, rangeValueDelta);
-        response_value["rangeValue"] = rangeValueDelta;
-        return success;
-    }
-
-    if (channelCallback && action == "changeChannel") {
-        String channelName = request_value["channel"]["name"];
-        success = channelCallback(deviceId, channelName);
-        response_value["channel"].createNestedObject("name");
-        response_value["channel"]["name"] = channelName;
-        return success;
-    }
-
-    if (skipChannelCallback && action == "skipChannels") {
-        String channelName = "";
-        int channelCount = request_value["channelCount"];
-        success = skipChannelCallback(deviceId, channelCount, channelName);
-        response_value["channel"].createNestedObject("name");
-        response_value["channel"]["name"] = channelName;
-        return success;
-    }
-
-    if (modeCallback && action == "setMode") {
-        String mode = request_value["mode"];
-        success = modeCallback(deviceId, mode);
-        response_value["mode"] = mode;
-        return success;
-    }
-
-    if (setBandsCallback && action == "setBands") {
-        JsonArray bandsArray = request_value["bands"];
-        response_value.createNestedArray("bands");
-
-        for (size_t i=0; i < bandsArray.size(); i++) {
-            Bands_t bands = bands_BASS;
-            int level = bandsArray[i]["level"];
-            String bandsStr = bandsArray[i]["name"];
-            if (bandsStr == "BASS") bands = bands_BASS;
-            if (bandsStr == "MIDRANGE") bands = bands_MIDRANGE;
-            if (bandsStr == "TREBBLE") bands = bands_TREBBLE;
-            success = setBandsCallback(deviceId, bands, level);
-            JsonObject response_value_bands = response_value["bands"].createNestedObject();
-            response_value_bands["level"] = level;
-            response_value_bands["name"] = bandsStr;
-        }
-        return success;
-    }
-
-    if (adjustBandsCallback && action == "adjustBands") {
-        JsonArray bandsArray = request_value["bands"];
-        response_value.createNestedArray("bands");
-
-        for (size_t i=0; i < bandsArray.size(); i++) {
-            Bands_t bands = bands_BASS;
-            int level = request_value["bands"][i]["levelDelta"] | 1;
-            if (request_value["bands"][i]["levelDirection"] == "DOWN") level *= -1;
-
-            String bandsStr = request_value["bands"][i]["name"];
-            if (bandsStr == "BASS") bands = bands_BASS;
-            if (bandsStr == "MIDRANGE") bands = bands_MIDRANGE;
-            if (bandsStr == "TREBBLE") bands = bands_TREBBLE;
-            success = adjustBandsCallback(deviceId, bands, level);
-            JsonObject response_value_bands = response_value["bands"].createNestedObject();
-            response_value_bands["level"] = level;
-            response_value_bands["name"] = bandsStr;
-        }
-        return success;
-    }
-
-    if (resetBandsCallback && action == "resetBands") {
-        JsonArray bandsArray = request_value["bands"];
-        response_value.createNestedArray("bands");
-        for (size_t i=0; i < bandsArray.size(); i++) {
-            Bands_t bands = bands_BASS;
-
-            String bandsStr = request_value["bands"][i]["name"];
-            if (bandsStr == "BASS") bands = bands_BASS;
-            if (bandsStr == "MIDRANGE") bands = bands_MIDRANGE;
-            if (bandsStr == "TREBBLE") bands = bands_TREBBLE;
-            success = resetBandsCallback(deviceId, bands);
-            JsonObject response_value_bands = response_value["bands"].createNestedObject();
-            response_value_bands["level"] = 0;
-            response_value_bands["name"] = bandsStr;
-        }
-        return success;
-    }
-    return success;
-    */
 }
 
 void SinricProController::handleSendQueue() {
@@ -428,11 +142,11 @@ void SinricProController::reconnect() {
 
 
 // check if device can send an event
-bool SinricProController::canSendEvent(String deviceId) {
+bool SinricProController::canSendEvent(const String& deviceId) {
     for (auto& device : devices) {
         if (String(device->getDeviceID()) == deviceId) {
             unsigned long actualMillis = millis();
-            if (actualMillis - device->getLastEvent() >= device->getEventsEveryMS()) {
+            if (actualMillis - device->getLastEvent() >= device->getEventsFrequency()) {
                 device->setLastEvent(actualMillis);
                 return true;
             }
@@ -441,6 +155,9 @@ bool SinricProController::canSendEvent(String deviceId) {
     return false;
 }
 
+BinarySwitch* SinricProController::buildBinarySwitch(String deviceID, PowerStateCallback cb) {
+    return new BinarySwitch(std::move(deviceID), std::move(cb), jsonFactory);
+}
 
 // events
 /*

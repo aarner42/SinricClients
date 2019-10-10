@@ -81,7 +81,7 @@ SinricEvent JsonFactory::getTransaction(SinricMessage *msg) {
 
 String JsonFactory::getSignedResponse(SinricEvent t) {
     String responseString = signMessage(t.getResponse());
-
+    return responseString;
 }
 
 

@@ -22,11 +22,10 @@ private:
     void handleRequest();
     bool handleCallbacks(const SinricEvent&); //String deviceId, String action, JsonObject& request_value, JsonObject& value);
     void handleSendQueue();
-    void connect();
     void disconnect();
     void reconnect();
-    bool canSendEvent(String deviceId);
-
+    bool canSendEvent(const String& deviceId);
+    void handleDeviceUpdates();
     WebSocketListener socketListener;
 
     typedef std::vector<IDevice*> SinricProDeviceList;
@@ -35,14 +34,14 @@ private:
 public:
     ~SinricProController();
     SinricProController(const String& socketAuth, String app_secret, String serverURL);
-
+    void connect();
     void add(IDevice* device, unsigned long eventsEveryMS = 10000);
     void handle();
     void stop();
     bool isConnected();
-
     int size();
 
+    BinarySwitch* buildBinarySwitch(String deviceID, PowerStateCallback cb);
 };
 
 #endif

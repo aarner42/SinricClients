@@ -6,6 +6,7 @@
 #define SINRICPRO_BINARYSWITCH_H
 
 #include <utility>
+#include <JSON/JsonFactory.h>
 
 #include "IDevice.h"
 
@@ -15,9 +16,11 @@ class BinarySwitch :  public Device
 {
 public:
 
-    BinarySwitch(String deviceId, PowerStateCallback cb) {
+    BinarySwitch(String deviceId, PowerStateCallback cb, JsonFactory jsonFactory) {
+        factory = jsonFactory;
         stateCallback = cb;
         deviceID = std::move(deviceId);
+        state = false;
     }
 
     bool processRequest(SinricEvent t) override {
@@ -33,10 +36,28 @@ public:
         return cbResult;
     }
 
+
+
     ~BinarySwitch() override = default;
+
+    void setState(bool newState) {
+        if (newState != state) {
+            state = newState;
+
+            DynamicJsonDocument eventMessage = jsonFactory.prepareEvent(deviceId, "setPowerState", cause);
+            JsonObject event_value = eventMessage["payload"]["value"];
+            event_value["state"] = state?"On":"Off";
+            sendEvent(eventMessage);
+
+            //send update to sinric
+            //response = new SinricMessage();
+
+        }
+    }
 
 private:
     PowerStateCallback stateCallback;
+    bool state;
 };
 
 

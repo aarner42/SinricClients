@@ -46,9 +46,9 @@ void setup() {
 
     webController = new LocalWebController(swCfg->deviceID, 80, openRelay, closeRelay, stateCallback);
 
-    binarySwitch = new BinarySwitch(swCfg->deviceID, stateCallback);
-
     controller = new SinricProController(swCfg->socketAuth, swCfg->signingKey, "ws.sinric.pro");
+    binarySwitch = controller->buildBinarySwitch(swCfg->deviceID, stateCallback);
+
     controller->add(binarySwitch, 1000);
     controller->connect();
 
